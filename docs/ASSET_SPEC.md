@@ -41,8 +41,9 @@ res://assets/characters/<资产名>/          ← 一个角色一个目录，目
 
 ## 3. 骨架规范
 
-人形统一使用下面这套骨骼名（`gen_character.py` 已按此实现）。
-后期接 Mixamo / UniRig / Rigify 的产物时，按这张表做名字映射即可复用动画库。
+人形统一使用下面这套骨骼名。**唯一的权威定义在 `tools/blender/rig_lib.py`**，
+`gen_character.py`（程序化生成）和 `auto_rig.py`（自动绑定）都从那里取，
+不允许各自复制一份。后期接 Mixamo / UniRig / Rigify 的产物时，按这张表做名字映射即可复用动画库。
 
 | 骨骼 | 父级 | 说明 |
 |---|---|---|
@@ -90,17 +91,55 @@ res://assets/characters/<资产名>/          ← 一个角色一个目录，目
 ## 6. 生成管线契约
 
 无论模型是「程序化生成」「图生3D」还是「文生3D」，最终都必须产出上面这套结构，
-并且必须通过验证：
+并且必须通过验证。**静态网格进来之后，统一由自动绑定补齐骨骼与动画。**
+
+### 6.1 两条入口
 
 ```powershell
-# 1) 生成（会写出 <name>.glb 与 <name>.meta.json）
-pwsh -File tools\pipeline\build_character.ps1 -Name hero -Force
+# A) 程序化生成（自带网格 + 骨骼 + 动画）
+pwsh -File tools\pipeline\build_character.ps1 -Name hero -Force -Verify -Preview
 
-# 2) 一键验证：脚本解析 → Godot 导入 → 资产自检
-pwsh -File tools\verify.ps1 -Asset res://assets/characters/hero/hero.glb --min-bones 15 --min-clips 3
+# B) 任意静态网格 → 自动套骨架 + 动画（图生3D / 文生3D / 下载的模型走这条）
+pwsh -File tools\pipeline\rig_asset.ps1 -In D:\ai_out\monster.glb -Preview -Screenshot
+```
+
+### 6.2 自动绑定对输入网格的要求
+
+`auto_rig.py` 靠几何特征推断体型，对输入有以下期望（不满足时会退化到人体比例兜底，
+但效果会变差）：
+
+| 输入条件 | 为什么 |
+|---|---|
+| 网格**竖直站立**、脚底大致水平 | 高度方向切片分析的前提；躺着的模型会把「身高」算成「身长」 |
+| 身高方向 = +Z（Blender 坐标） | 若模型是 Y-up 的原始数据，先旋转再绑定 |
+| 人形或类人形（有头、躯干、两条腿、两条手臂） | 骨架模板是人形 19 骨骼 |
+| 左右大致对称 | 手臂/腿的检测依赖左右对称性 |
+| 单一网格（多块会自动合并） | 合并后才能算出一致的骨架 |
+
+自动绑定能处理的「不标准」情况：
+
+- 手臂贴身下垂（靠 X/Y 跨度差异区分手臂与躯干，不依赖「手臂张开」）
+- 大头短腿、长臂等夸张比例（用实测的髋宽/肩高/臂长覆盖经验比例）
+- 脚部并拢（`legs_split=False` 时按髋宽摆放腿骨）
+- 没有手臂的怪物（会打印警告并按人体比例放手臂骨，此时建议 `-Clips none` 或自备骨架）
+
+### 6.3 验证
+
+```powershell
+# 一键验证：脚本解析 → Godot 导入 → 资产自检
+pwsh -File tools\verify.ps1 -Asset res://assets/characters/hero/hero.glb -MinBones 15 -MinClips 3
 ```
 
 验证不通过就不算「生成成功」。**不要**在验证失败的情况下继续往上叠场景和玩法。
+
+### 6.4 从现成模型造测试样本
+
+```powershell
+python tools\pipeline\strip_rig.py --in hero.glb --out hero_static.glb
+```
+
+剥掉骨骼/蒙皮/动画，得到与「图生3D 产出」等价的静态网格，
+用来回归验证自动绑定链路是否仍然可用。
 
 ## 7. 已知坑
 

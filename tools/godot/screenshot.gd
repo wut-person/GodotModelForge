@@ -13,6 +13,7 @@ extends SceneTree
 ##   --screenshot=<路径>  输出 PNG，相对路径按项目根解析，默认 docs/preview/godot_scene.png
 ##   --frames=<N>         预热帧数，默认 45（等光照/阴影/动画稳定下来）
 ##   --scene=<res://..>   要截的场景，默认 res://scenes/Main.tscn
+##   --asset=<res://..>   覆盖主场景的 asset_path（截指定角色，便于两两对比）
 
 const DEFAULT_FRAMES := 45
 const DEFAULT_OUT := "docs/preview/godot_scene.png"
@@ -20,6 +21,7 @@ const DEFAULT_SCENE := "res://scenes/Main.tscn"
 
 var _out_path := DEFAULT_OUT
 var _scene_path := DEFAULT_SCENE
+var _asset_path := ""
 var _frames := DEFAULT_FRAMES
 var _count := 0
 var _captured := false
@@ -34,6 +36,8 @@ func _initialize() -> void:
 			_frames = int(arg.substr("--frames=".length()))
 		elif arg.begins_with("--scene="):
 			_scene_path = arg.substr("--scene=".length())
+		elif arg.begins_with("--asset="):
+			_asset_path = arg.substr("--asset=".length())
 
 	if not ResourceLoader.exists(_scene_path):
 		push_error("[screenshot] 找不到场景: %s" % _scene_path)
@@ -46,7 +50,16 @@ func _initialize() -> void:
 		quit(1)
 		return
 
-	root.add_child((packed as PackedScene).instantiate())
+	var inst: Node = (packed as PackedScene).instantiate()
+	# 在入树之前覆盖资产路径，这样 _ready 里加载的就是指定的角色
+	if not _asset_path.is_empty():
+		if "asset_path" in inst:
+			inst.set("asset_path", _asset_path)
+			print("[screenshot] 覆盖资产: %s" % _asset_path)
+		else:
+			push_warning("[screenshot] 场景没有 asset_path 属性，忽略 --asset")
+
+	root.add_child(inst)
 	print("[screenshot] 已加载 %s，预热 %d 帧后截图 -> %s" % [_scene_path, _frames, _out_path])
 
 

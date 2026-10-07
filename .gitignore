@@ -1,10 +1,14 @@
-# Godot 导入缓存与编辑器状态，不要提交（可重建）
+# Godot import cache and editor state. Rebuildable, never commit.
 .godot/
-# 导出产物
+# Export output
 build/
 exports/
 
-# 系统垃圾
+# OS junk
 Thumbs.db
 desktop.ini
 *.tmp
+
+# Python bytecode cache
+__pycache__/
+*.pyc

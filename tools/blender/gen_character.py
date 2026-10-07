@@ -25,6 +25,10 @@ import bpy
 import mathutils
 from mathutils import Vector, Euler
 
+# 同目录的共享库（骨骼规范 / 蒙皮权重 / 动画库 / 导出）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rig_lib
+
 # Blender 5.x 对部分旧属性发 DeprecationWarning，这些警告会走 stderr，
 # 在 PowerShell 的 $ErrorActionPreference='Stop' 下会被当成致命错误，直接静音。
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -92,51 +96,11 @@ def purge_scene():
                 pass
 
 
-def bone(name, head, tail, parent=None, connect=False):
-    """描述一根骨骼（Z-up，单位米，角色面朝 -Y）。"""
-    return {
-        "name": name, "head": Vector(head), "tail": Vector(tail),
-        "parent": parent, "connect": connect,
-    }
-
-
 def build_skeleton(height=1.8):
     """
-    人形骨架定义。比例按 1.8m 成年人缩放，命名与主流游戏引擎人形规范对齐，
-    后期接 Mixamo / UniRig / Rigify 的产物时可以按名字映射。
+    人形骨架定义，直接复用共享库 rig_lib 里的规范（与 auto_rig.py 同一套骨骼名）。
     """
-    s = height / 1.8  # 统一缩放系数
-
-    def v(x, y, z):
-        return (x * s, y * s, z * s)
-
-    bones = [
-        # ---- 躯干 ----
-        bone("hips",       v(0, 0, 0.98),    v(0, 0, 1.12)),
-        bone("spine",      v(0, 0, 1.12),    v(0, 0, 1.28), "hips", True),
-        bone("chest",      v(0, 0, 1.28),    v(0, 0, 1.45), "spine", True),
-        bone("neck",       v(0, 0, 1.45),    v(0, 0, 1.55), "chest", True),
-        bone("head",       v(0, 0, 1.55),    v(0, 0, 1.75), "neck", True),
-        # ---- 左臂 ----
-        bone("shoulder.L", v(0.035, 0, 1.40), v(0.175, 0, 1.42), "chest"),
-        bone("upperarm.L", v(0.175, 0, 1.42), v(0.175, 0, 1.14), "shoulder.L", True),
-        bone("forearm.L",  v(0.175, 0, 1.14), v(0.175, 0, 0.90), "upperarm.L", True),
-        bone("hand.L",     v(0.175, 0, 0.90), v(0.175, 0, 0.78), "forearm.L", True),
-        # ---- 右臂 ----
-        bone("shoulder.R", v(-0.035, 0, 1.40), v(-0.175, 0, 1.42), "chest"),
-        bone("upperarm.R", v(-0.175, 0, 1.42), v(-0.175, 0, 1.14), "shoulder.R", True),
-        bone("forearm.R",  v(-0.175, 0, 1.14), v(-0.175, 0, 0.90), "upperarm.R", True),
-        bone("hand.R",     v(-0.175, 0, 0.90), v(-0.175, 0, 0.78), "forearm.R", True),
-        # ---- 左腿 ----
-        bone("thigh.L",    v(0.09, 0, 0.96),  v(0.10, 0, 0.53), "hips"),
-        bone("shin.L",     v(0.10, 0, 0.53),  v(0.105, 0, 0.09), "thigh.L", True),
-        bone("foot.L",     v(0.105, 0, 0.09), v(0.105, -0.16, 0.03), "shin.L", True),
-        # ---- 右腿 ----
-        bone("thigh.R",    v(-0.09, 0, 0.96), v(-0.10, 0, 0.53), "hips"),
-        bone("shin.R",     v(-0.10, 0, 0.53), v(-0.105, 0, 0.09), "thigh.R", True),
-        bone("foot.R",     v(-0.105, 0, 0.09), v(-0.105, -0.16, 0.03), "shin.R", True),
-    ]
-    return bones
+    return rig_lib.skeleton(scaled=True, height=height)
 
 
 def build_body_boxes(height=1.8):
@@ -215,34 +179,13 @@ def build_body_boxes(height=1.8):
 
 
 # --------------------------------------------------------------------------- 权重
-
-def dist_point_segment(p, a, b):
-    ab = b - a
-    denom = ab.dot(ab)
-    t = 0.0 if denom < 1e-12 else max(0.0, min(1.0, (p - a).dot(ab) / denom))
-    return (p - (a + ab * t)).length
+# 蒙皮权重算法统一放在 rig_lib.compute_weights()，这里只做一层薄封装，
+# 保证「程序化模型」和「AI 生成的任意网格」用的是同一套绑定算法。
 
 
 def compute_weights(verts, bone_list, max_influences=3, falloff=1.6):
-    """
-    按「到骨骼线段的距离」计算蒙皮权重。
-
-    为什么自己算而不用 Blender 的 automatic weights：
-      heat-map 自动权重在无头模式下偶尔会静默失败（返回全零或直接报错），
-      而距离权重是确定性的、可复现的，对程序化模型足够好。
-      AI 生成的真实网格后期会改用 heat map / 骨骼包络，但接口保持一致。
-    """
-    weights = []  # 每个顶点 -> {bone_name: w}
-    segs = [(b["name"], b["head"], b["tail"]) for b in bone_list]
-    for v in verts:
-        p = Vector(v)
-        ds = [(name, max(dist_point_segment(p, h, t), 1e-4)) for name, h, t in segs]
-        ds.sort(key=lambda x: x[1])
-        chosen = ds[:max_influences]
-        raw = [(n, 1.0 / (d ** falloff)) for n, d in chosen]
-        total = sum(w for _, w in raw)
-        weights.append({n: w / total for n, w in raw})
-    return weights
+    return rig_lib.compute_weights(verts, bone_list,
+                                   max_influences=max_influences, falloff=falloff)
 
 
 # --------------------------------------------------------------------------- 建模
@@ -354,204 +297,29 @@ def bind(mesh_obj, arm_obj):
 
 
 # --------------------------------------------------------------------------- 动画
+# 姿态应用、关键帧、Action 兼容、动画片段库全部来自 rig_lib，
+# 这样 auto_rig.py 给 AI 生成的网格套骨架时，能直接复用同一批动画。
 
+#: 本生成器默认带上的片段（保持向后兼容：hero 资产一直是这三个）
+CLIPS = ["Idle", "Walk", "Attack"]
 
-def set_pose(arm_obj, pose):
-    """pose: {bone: (rx, ry, rz)}，单位弧度。未列出的骨骼归零。"""
-    for pb in arm_obj.pose.bones:
-        rot = pose.get(pb.name, (0.0, 0.0, 0.0))
-        pb.rotation_euler = Euler(rot, "XYZ")
-
-
-def key_all(arm_obj, frame):
-    for pb in arm_obj.pose.bones:
-        pb.keyframe_insert("rotation_euler", frame=frame)
-        if pb.name == "hips":
-            pb.keyframe_insert("location", frame=frame)
-
-
-def action_fcurves(action):
-    """
-    取 Action 里的所有 F-Curve。
-
-    Blender 4.x 是 `action.fcurves`；5.0 起换成「分层动作」：
-    action.layers[*].strips[*].channelbags[*].fcurves。
-    这里同时兼容两种结构，避免升级 Blender 就炸。
-    """
-    legacy = getattr(action, "fcurves", None)
-    if legacy is not None and len(legacy) > 0:
-        return list(legacy)
-    out = []
-    for layer in getattr(action, "layers", []):
-        for strip in getattr(layer, "strips", []):
-            bags = getattr(strip, "channelbags", None)
-            if bags is None:
-                try:
-                    cb = strip.channelbag(action.slots[0])
-                    bags = [cb] if cb else []
-                except Exception:
-                    bags = []
-            for bag in bags:
-                out.extend(list(bag.fcurves))
-    return out
-
-
-def make_action(arm_obj, name, keys):
-    """
-    keys: [(frame, pose_dict), ...]
-    返回创建好的 Action，并把旋转曲线设为线性插值，避免默认贝塞尔导致的过冲。
-    """
-    action = bpy.data.actions.new(name)
-    action.use_fake_user = True
-    if arm_obj.animation_data is None:
-        arm_obj.animation_data_create()
-    arm_obj.animation_data.action = action
-    for frame, pose in keys:
-        set_pose(arm_obj, pose)
-        key_all(arm_obj, frame)
-    for fc in action_fcurves(action):
-        for kp in fc.keyframe_points:
-            kp.interpolation = "LINEAR"
-    return action
-
-
-R = math.radians
-
-
-def anim_idle():
-    """待机：轻微呼吸起伏 + 手臂自然下垂微摆。"""
-    a = {
-        "spine": (R(2), 0, 0), "chest": (R(-2), 0, 0),
-        "upperarm.L": (R(4), 0, R(6)), "upperarm.R": (R(4), 0, R(-6)),
-        "forearm.L": (R(-8), 0, 0), "forearm.R": (R(-8), 0, 0),
-    }
-    b = {
-        "spine": (R(-2), 0, 0), "chest": (R(2), 0, 0),
-        "upperarm.L": (R(-2), 0, R(9)), "upperarm.R": (R(-2), 0, R(-9)),
-        "forearm.L": (R(-14), 0, 0), "forearm.R": (R(-14), 0, 0),
-    }
-    return [(1, a), (25, b), (49, a)]
-
-
-def anim_walk():
-    """走路循环：左右腿交替摆动，手臂反向摆。1 秒 24 帧循环。"""
-    contact_l = {
-        "thigh.L": (R(-28), 0, 0), "shin.L": (R(10), 0, 0), "foot.L": (R(12), 0, 0),
-        "thigh.R": (R(24), 0, 0), "shin.R": (R(6), 0, 0), "foot.R": (R(-14), 0, 0),
-        "upperarm.L": (R(22), 0, R(4)), "upperarm.R": (R(-24), 0, R(-4)),
-        "forearm.L": (R(-18), 0, 0), "forearm.R": (R(-26), 0, 0),
-        "spine": (R(3), 0, 0),
-    }
-    pass_l = {
-        "thigh.L": (R(-4), 0, 0), "shin.L": (R(4), 0, 0), "foot.L": (R(0), 0, 0),
-        "thigh.R": (R(2), 0, 0), "shin.R": (R(38), 0, 0), "foot.R": (R(-8), 0, 0),
-        "upperarm.L": (R(6), 0, R(4)), "upperarm.R": (R(-6), 0, R(-4)),
-        "forearm.L": (R(-14), 0, 0), "forearm.R": (R(-16), 0, 0),
-        "spine": (R(4), 0, 0),
-    }
-    contact_r = {
-        "thigh.R": (R(-28), 0, 0), "shin.R": (R(10), 0, 0), "foot.R": (R(12), 0, 0),
-        "thigh.L": (R(24), 0, 0), "shin.L": (R(6), 0, 0), "foot.L": (R(-14), 0, 0),
-        "upperarm.R": (R(22), 0, R(-4)), "upperarm.L": (R(-24), 0, R(4)),
-        "forearm.R": (R(-18), 0, 0), "forearm.L": (R(-26), 0, 0),
-        "spine": (R(3), 0, 0),
-    }
-    pass_r = {
-        "thigh.R": (R(-4), 0, 0), "shin.R": (R(4), 0, 0), "foot.R": (R(0), 0, 0),
-        "thigh.L": (R(2), 0, 0), "shin.L": (R(38), 0, 0), "foot.L": (R(-8), 0, 0),
-        "upperarm.R": (R(6), 0, R(-4)), "upperarm.L": (R(-6), 0, R(4)),
-        "forearm.R": (R(-14), 0, 0), "forearm.L": (R(-16), 0, 0),
-        "spine": (R(4), 0, 0),
-    }
-    return [(1, contact_l), (7, pass_l), (13, contact_r), (19, pass_r), (25, contact_l)]
-
-
-def anim_attack():
-    """攻击：右臂上举后向前挥出，躯干跟着拧转。"""
-    windup = {
-        "upperarm.R": (R(-120), 0, R(-20)), "forearm.R": (R(-70), 0, 0),
-        "chest": (0, 0, R(-25)), "spine": (0, 0, R(-12)),
-        "upperarm.L": (R(-20), 0, R(30)), "forearm.L": (R(-40), 0, 0),
-        "thigh.R": (R(-10), 0, 0), "thigh.L": (R(8), 0, 0),
-    }
-    strike = {
-        "upperarm.R": (R(50), 0, R(10)), "forearm.R": (R(-10), 0, 0),
-        "chest": (R(8), 0, R(22)), "spine": (R(6), 0, R(10)),
-        "upperarm.L": (R(20), 0, R(10)), "forearm.L": (R(-60), 0, 0),
-        "thigh.R": (R(14), 0, 0), "thigh.L": (R(-14), 0, 0),
-    }
-    recover = {
-        "upperarm.R": (R(6), 0, R(-6)), "forearm.R": (R(-14), 0, 0),
-        "chest": (R(0), 0, R(4)), "spine": (R(2), 0, 0),
-        "upperarm.L": (R(4), 0, R(6)), "forearm.L": (R(-14), 0, 0),
-    }
-    return [(1, recover), (9, windup), (15, strike), (30, recover)]
-
-
-CLIPS = {"Idle": anim_idle, "Walk": anim_walk, "Attack": anim_attack}
+# 薄封装，保持原有调用点不变
+set_pose = rig_lib.set_pose
+key_all = rig_lib.key_all
+make_action = rig_lib.make_action
 
 
 def build_animations(arm_obj):
     """生成多个 Action，并推入 NLA，让 glTF 导出器能一次导出所有片段。"""
-    actions = []
-    for name, fn in CLIPS.items():
-        act = make_action(arm_obj, name, fn())
-        actions.append(act)
-
-    # 收尾：清空当前 action，把每个 action 放到独立 NLA 轨道上
-    arm_obj.animation_data.action = None
-    for act in actions:
-        track = arm_obj.animation_data.nla_tracks.new()
-        track.name = act.name
-        strip = track.strips.new(act.name, int(act.frame_range[0]), act)
-        strip.name = act.name
-        track.mute = True  # 导出时不影响 rest pose
-    return actions
+    return rig_lib.build_animations(arm_obj, CLIPS)
 
 
 # --------------------------------------------------------------------------- 导出
+# 导出参数统一在 rig_lib.export_glb 里维护（auto_rig.py 共用）
 
 
 def export_glb(path, with_anim=True):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    for obj in bpy.context.scene.objects:
-        obj.select_set(True)
-
-    kwargs = dict(
-        filepath=path,
-        export_format="GLB",
-        use_selection=False,
-        export_apply=True,             # 应用修改器
-        export_yup=True,               # Z-up -> Y-up（Godot 需要）
-        export_materials="EXPORT",
-        export_skins=True,
-        export_animations=with_anim,
-        export_animation_mode="ACTIONS",   # 每个 Action 一个动画片段
-        export_bake_animation=False,
-        export_optimize_animation_size=False,
-        export_force_sampling=True,        # 采样成逐帧，避免约束/插值丢失
-        export_frame_range=False,
-        export_def_bones=False,
-        export_normals=True,
-        export_tangents=False,
-        export_texcoords=True,
-        export_extras=False,
-        export_cameras=False,
-        export_lights=False,
-        export_anim_single_armature=True,
-    )
-
-    # 不同 Blender 版本参数名有增删，按签名过滤，避免因未知参数直接失败
-    op = bpy.ops.export_scene.gltf
-    valid = set(op.get_rna_type().properties.keys())
-    dropped = [k for k in kwargs if k not in valid]
-    for k in dropped:
-        kwargs.pop(k)
-    if dropped:
-        print("[pipeline] 当前 Blender 不支持的导出参数已忽略: %s" % ", ".join(dropped))
-
-    op(**kwargs)
-    return path
+    return rig_lib.export_glb(path, with_anim=with_anim)
 
 
 # --------------------------------------------------------------------------- 主流程

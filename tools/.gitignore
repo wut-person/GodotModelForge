@@ -1,0 +1,8 @@
+# Test fixtures and intermediate artifacts. Regenerate with tools/pipeline/strip_rig.py.
+# Keep this file ASCII-only. Note: patterns here are relative to THIS directory,
+# so it must be "_fixtures/" and not "tools/_fixtures/".
+_fixtures/
+
+# Python bytecode cache
+__pycache__/
+*.pyc

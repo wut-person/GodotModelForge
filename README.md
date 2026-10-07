@@ -17,7 +17,8 @@
 | 自动验证 | ✅ 已完成 | 脚本解析 + 资源导入 + 资产自检 三关，返回退出码 |
 | 建模后端 | ✅ 已完成 | **Blender 5.2.2**（以 `bpy` Python 模块方式运行，无需安装 Blender） |
 | 端到端链路 | ✅ 已跑通 | 程序化生成带骨骼动画的角色 → GLB → Godot 导入 → 自检全绿 |
-| AI 图生3D 生成 | ⏳ 待接入 | 链路已就绪，等接生成模型（见下方「下一步」） |
+| 自动绑定（auto-rig） | ✅ 已完成 | **任意静态网格 → 分析体型 → 套 19 骨骼人形骨架 → 蒙皮 → 套 4 段动画 → Godot 验证通过** |
+| AI 图生3D 生成 | ⏳ 待接入 | 链路已就绪（静态网格进来即可自动绑定），等接生成模型 |
 
 ### 跑通的样子
 
@@ -28,6 +29,10 @@ Blender 侧模型（Workbench 渲染，带骨骼显示）：
 Godot 侧真实渲染（Vulkan / Forward+，自动截图）：
 
 ![Godot 场景截图](docs/preview/hero.godot.png)
+
+自动绑定链路产出的资产（静态网格 → 自动套骨架，同样在 Godot 里渲染）：
+
+![自动绑定结果](docs/preview/autorig_full.godot.png)
 
 ---
 
@@ -71,21 +76,60 @@ GodotModelForge/
 │   ├── Main.gd                   命令行参数解析 / 自检 / 展示
 │   └── AssetInspector.gd         资产规范检查器（网格/骨骼/蒙皮/动画/材质）
 ├── tools/
-│   ├── build.cmd                 一键：生成 + 验证（+ 预览图 / 截图）
+│   ├── build.cmd                 一键：程序化生成角色 + 验证（+ 预览图 / 截图）
+│   ├── rig.cmd                   一键：给任意静态网格自动套骨架加动画 + 验证
 │   ├── verify.cmd                一键：验证
 │   ├── verify.ps1                三关校验实现
 │   ├── blender/
-│   │   ├── gen_character.py      程序化建模 + 骨架 + 蒙皮权重 + 动画 + 导出 GLB
+│   │   ├── rig_lib.py            ★ 共享库：骨骼规范 / 蒙皮权重算法 / 动画库 / GLB 导出
+│   │   ├── gen_character.py      程序化建模（自带网格，走共享库绑定）
+│   │   ├── auto_rig.py           ★ 自动绑定：分析体型 → 贴合骨架 → 蒙皮 → 加动画
 │   │   └── render_preview.py     渲染预览图（Workbench，无需 GPU 光追）
+│   ├── pipeline/
+│   │   ├── build_character.ps1   程序化生成的入口
+│   │   ├── rig_asset.ps1         自动绑定的入口
+│   │   └── strip_rig.py          剥离 GLB 的骨骼/动画（造测试样本）
 │   ├── godot/
-│   │   └── screenshot.gd         Godot 真实渲染截图（SceneTree 脚本）
-│   └── pipeline/build_character.ps1   生成入口（自动选 bpy 模块 / Blender 可执行文件）
+│   │   └── screenshot.gd         Godot 真实渲染截图（SceneTree 脚本，支持 --asset 指定角色）
+│   └── _fixtures/                测试样本（已 gitignore，可重新生成）
 └── docs/ASSET_SPEC.md            资产规范（命名/朝向/骨骼/预算/坑）
 ```
 
 ---
 
 ## 怎么用
+
+### 给任意模型自动套骨架并加动画（核心能力）
+
+图生3D / 文生3D / 网上下载的模型，通常只有**一个静态网格**：没骨骼、没蒙皮、没动画。
+这个命令把它变成可直接进游戏的动画角色：
+
+```cmd
+tools\rig.cmd "D:\ai_out\monster.glb" -Preview -Screenshot
+```
+
+依次执行：分析体型（总高/髋宽/肩宽/手臂伸展/腿是否分开）→ 贴合 19 骨骼标准人形骨架
+→ 计算蒙皮权重（带左右串扰惩罚）→ 套用 Idle/Walk/Run/Attack 四段动画
+→ 导出 GLB → Godot 导入并自检 → 渲染预览图与场景截图。
+
+常用参数：
+
+| 参数 | 作用 |
+|---|---|
+| `-Name myasset` | 指定落地资产名（默认取输入文件名） |
+| `-Height 2.4` | 缩放到目标身高（默认 0 = 保持原尺寸不缩放） |
+| `-Clips Idle,Walk` | 只套指定动画；`-Clips none` = 只要骨骼不要动画 |
+| `-SidePenalty 4` | 出现「左臂动右臂跟着动」时调大，抑制左右串扰 |
+| `-NoVerify` | 跳过 Godot 验证（不推荐） |
+
+### 剥离现成模型的骨骼/动画（造测试样本、清瘦资产）
+
+```cmd
+python tools\pipeline\strip_rig.py --in hero.glb --out hero_static.glb --report strip.json
+```
+
+只保留网格与材质，去掉骨架/蒙皮/动画。上面的自动绑定链路就是用它造出
+「图生3D 风格」的输入来验证的（129 KB → 16.8 KB）。
 
 ### 生成一个新角色并验证
 
@@ -142,18 +186,22 @@ D:\Tools\Godot\Godot_v4.7.2-stable_win64_console.exe --headless --path . -- --ch
    `gen_character.py` 与 `AssetInspector.gd`，不靠人记 `docs/ASSET_SPEC.md`。
 4. **不用完整 Blender 也能跑。** `bpy` 模块方式避免了 Blender 官网在国内 403、
    镜像站要过 JS 校验的问题，`pip install bpy` 一条命令搞定，也更容易被自动化复现。
+5. **自动绑定是「生成」和「能用」之间的桥。** 生成模型这一步再强，产出的也只是静态网格。
+   真正让资产可用的是 rigging：骨架、蒙皮、动画。所以这部分做成了独立、可复用、
+   不关心网格来源的能力——换任何生成器，这一个环节都不用重做。
 
 ---
 
 ## 下一步（按优先级）
 
-1. **接入图生3D**：单张参考图 → 网格 → 走现有「套骨架 + 算权重 + 导出 + 验证」链路。
+1. **接入图生3D**：单张参考图 → 网格 → 直接喂给 `tools\rig.cmd`（自动绑定已就绪）。
    6 GB 显存是硬约束，需要量化模型或分阶段（先生成网格，再单独跑贴图）。
-2. **自动绑定（auto-rig）**：目前骨架是我们自己定的 19 骨骼人形。
-   接 AI 生成的任意网格时，需要有工具把任意网格套到这套骨架上。
-3. **重拓扑 + UV + 烘焙**：图生3D 的输出通常是三角汤、无 UV，必须处理才能进游戏。
-4. **动画库**：把 Mixamo / 免费动作库的片段按 `docs/ASSET_SPEC.md` 的骨骼命名映射进来。
-5. **Godot 侧集成**：把验证通过的角色做成可复用的 `CharacterBody3D` 场景模板。
+2. **重拓扑 + UV + 烘焙**：图生3D 的输出通常是三角汤、无 UV，贴图会拉伸，必须处理。
+3. **怪物/四足骨架**：现在自动绑定的骨架是人形 19 骨骼。非人形（四足、多足、飞行）
+   需要另一套骨架模板 + 对应的体型分析规则。
+4. **动画库扩充**：把 Mixamo / 免费动作库的片段按 `docs/ASSET_SPEC.md` 的骨骼命名映射进来，
+   让 `-Clips` 能选到几十个动作。
+5. **Godot 侧集成**：把验证通过的角色做成可复用的 `CharacterBody3D` 场景模板（含状态机）。
 
 ---
 
