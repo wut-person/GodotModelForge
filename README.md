@@ -19,6 +19,16 @@
 | 端到端链路 | ✅ 已跑通 | 程序化生成带骨骼动画的角色 → GLB → Godot 导入 → 自检全绿 |
 | AI 图生3D 生成 | ⏳ 待接入 | 链路已就绪，等接生成模型（见下方「下一步」） |
 
+### 跑通的样子
+
+Blender 侧模型（Workbench 渲染，带骨骼显示）：
+
+![hero 模型预览](assets/characters/hero/hero.preview.png)
+
+Godot 侧真实渲染（Vulkan / Forward+，自动截图）：
+
+![Godot 场景截图](docs/preview/hero.godot.png)
+
 ---
 
 ## 环境（本机已装好）
@@ -61,12 +71,14 @@ GodotModelForge/
 │   ├── Main.gd                   命令行参数解析 / 自检 / 展示
 │   └── AssetInspector.gd         资产规范检查器（网格/骨骼/蒙皮/动画/材质）
 ├── tools/
-│   ├── build.cmd                 一键：生成 + 验证
+│   ├── build.cmd                 一键：生成 + 验证（+ 预览图 / 截图）
 │   ├── verify.cmd                一键：验证
 │   ├── verify.ps1                三关校验实现
 │   ├── blender/
 │   │   ├── gen_character.py      程序化建模 + 骨架 + 蒙皮权重 + 动画 + 导出 GLB
 │   │   └── render_preview.py     渲染预览图（Workbench，无需 GPU 光追）
+│   ├── godot/
+│   │   └── screenshot.gd         Godot 真实渲染截图（SceneTree 脚本）
 │   └── pipeline/build_character.ps1   生成入口（自动选 bpy 模块 / Blender 可执行文件）
 └── docs/ASSET_SPEC.md            资产规范（命名/朝向/骨骼/预算/坑）
 ```
@@ -78,10 +90,13 @@ GodotModelForge/
 ### 生成一个新角色并验证
 
 ```cmd
-tools\build.cmd myhero -Force -Preview
+tools\build.cmd myhero -Force -Preview -Screenshot
 ```
 
-会依次：Blender 建模导出 GLB → 渲染预览图 → 调 Godot 导入并自检，全绿才算成功。
+依次执行：Blender 建模导出 GLB → 渲染 Blender 预览图 → **调 Godot 导入并自检**
+→ 用 Godot 真实渲染截一张场景图。全绿才算成功。
+
+只想要其中几步就去掉对应开关（`-Preview` / `-Screenshot`），验证是默认开启的。
 
 ### 只验证已有资产
 
@@ -90,6 +105,14 @@ tools\verify.cmd res://assets/characters/hero/hero.glb 15 3
 ```
 
 参数：资产路径、最少骨骼数、最少动画片段数。
+
+### 只截 Godot 场景图
+
+```cmd
+D:\Tools\Godot\Godot_v4.7.2-stable_win64_console.exe --path . --script res://tools/godot/screenshot.gd -- --screenshot=docs/preview/hero.godot.png
+```
+
+注意：截图必须用**真实渲染驱动**，`--headless` 下拿不到画面。
 
 ### 在 Godot 里肉眼看
 
@@ -138,10 +161,35 @@ D:\Tools\Godot\Godot_v4.7.2-stable_win64_console.exe --headless --path . -- --ch
 
 | 坑 | 现象 | 解决 |
 |---|---|---|
-| `.ps1` 无 BOM | PS 5.1 按 ANSI 读，中文字符串被截断，报「字符串缺少终止符」 | `.ps1` 必须存成 **UTF-8 with BOM** |
+| `.ps1` 无 BOM | PS 5.1 按 ANSI 读，中文字符串被截断，报「字符串缺少终止符」 | `.ps1` 必须存成 **UTF-8 with BOM**（用 edit 工具改过后容易丢，改完要补） |
+| `.cmd` 里有中文 | cmd.exe 按 ANSI 读，中文注释被当成命令执行，报「不是内部或外部命令」 | `.cmd` **只写 ASCII**，中文说明放 `.ps1` 的注释里 |
 | Blender 把日志写 stderr | PS 5.1 + `$ErrorActionPreference='Stop'` 直接把脚本打断 | 调外部程序时临时降级为 `Continue`，只认退出码 |
 | `godot --import` 退出码不可靠 | 脚本解析失败它照样返回 0 | 必须额外解析输出里的 `Parse Error` / `SCRIPT ERROR` |
 | `.glb` 不导入就 `load()` 不到 | 返回 null，容易误判成「生成失败」 | 新增资产后必须跑一次 `godot --headless --import` |
 | glTF 导入器的 icosphere | Blender 导入 GLB 后多出一个 42 顶点球，把预览相机的包围盒撑大 | 它在 `glTF_not_exported` 集合里，渲染/算包围盒时要排除 |
 | Blender 5.x 的 Action 结构 | `action.fcurves` 不存在了（改成 layers/strips/channelbags） | `action_fcurves()` 兼容两种结构 |
 | PowerShell 5.1 无 `pwsh` | 本机只有 Windows PowerShell 5.1 | 脚本不要用 PS7 专有语法，用 `powershell.exe` 调用 |
+| `--headless` 截不到图 | headless 用 dummy 渲染驱动，viewport 没有画面 | 截图必须用真实渲染驱动（不加 `--headless`） |
+| Godot CLI 脚本基类 | `--script` 的脚本继承 `Node` 会报 `Can't load the script` | 必须继承 `SceneTree` 或 `MainLoop` |
+| Blender 官网 403 | `download.blender.org` 直连被拒，国内镜像要过 JS 校验 | 改用 `pip install bpy` 拿 Blender 作为 Python 模块 |
+
+---
+
+## 环境是怎么装起来的（可复现）
+
+```powershell
+# 1) Godot：自包含，解压即用
+curl.exe -L -o godot.zip "https://downloads.godotengine.org/?version=4.7.2&flavor=stable&slug=win64.exe.zip&platform=windows.64"
+Expand-Archive godot.zip -DestinationPath D:\Tools\Godot
+
+# 2) Python 3.13（bpy 只提供 cp311 / cp313 轮子，本机原有的 3.12 用不了）
+curl.exe -L -o py313.zip "https://www.python.org/ftp/python/3.13.7/python-3.13.7-embed-amd64.zip"
+Expand-Archive py313.zip -DestinationPath D:\Tools\Python313-blender
+# 编辑 python313._pth，取消 `import site` 的注释，然后装 pip
+curl.exe -L -o get-pip.py https://bootstrap.pypa.io/get-pip.py
+D:\Tools\Python313-blender\python.exe get-pip.py
+
+# 3) Blender 作为 Python 模块（约 340 MB）
+D:\Tools\Python313-blender\python.exe -m pip install bpy
+```
+

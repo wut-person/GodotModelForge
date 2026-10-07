@@ -12,7 +12,8 @@
     2) Blender 可执行文件
        设置 BLENDER_BIN 指向 blender.exe。
 
-  生成结束后可选自动跑一次 Godot 验证（-Verify）或渲染预览图（-Preview）。
+  生成结束后可选自动跑一次 Godot 验证（-Verify）、渲染 Blender 预览图（-Preview）、
+  或用 Godot 真实渲染截一张场景图（-Screenshot）。
 
 .PARAMETER Name
   资产名，决定输出目录与文件名，例如 hero / slime / boss01
@@ -35,6 +36,9 @@
 .PARAMETER Preview
   生成后渲染一张 PNG 预览图（Blender Workbench 引擎，无需 GPU 光追）
 
+.PARAMETER Screenshot
+  生成后用 Godot 真实渲染驱动截一张场景图（证明模型在引擎里画出来是对的）
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\pipeline\build_character.ps1 -Name hero -Force -Verify
 #>
@@ -46,7 +50,8 @@ param(
   [switch]$NoAnim,
   [switch]$Force,
   [switch]$Verify,
-  [switch]$Preview
+  [switch]$Preview,
+  [switch]$Screenshot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -150,13 +155,37 @@ if ($Preview) {
   else { Write-Host "预览图渲染失败（不影响模型本身）" -ForegroundColor Yellow }
 }
 
-# ---------------------------------------------------------------- 可选：自动验证
+# ---------------------------------------------------------------- 可选：Godot 验证
+# 放在截图之前：验证会跑 godot --import，确保资产已被导入，截图才有东西可渲染
+$verifyExit = 0
 if ($Verify) {
   Write-Host "`n调用 Godot 验证……" -ForegroundColor Cyan
   $vArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $ProjectRoot 'tools\verify.ps1'),
              '-Asset', "res://assets/characters/$Name/$Name.glb")
   & powershell.exe @vArgs
-  exit $LASTEXITCODE
+  $verifyExit = $LASTEXITCODE
 }
 
+# ---------------------------------------------------------------- 可选：Godot 场景截图
+if ($Screenshot) {
+  $Godot = if ($env:GODOT_BIN) { $env:GODOT_BIN } else { 'D:\Tools\Godot\Godot_v4.7.2-stable_win64_console.exe' }
+  if (-not (Test-Path $Godot)) {
+    Write-Host "找不到 Godot: $Godot（跳过截图）" -ForegroundColor Yellow
+  } else {
+    $shotRel = "docs/preview/$Name.godot.png"
+    Write-Host "Godot 真实渲染截图 -> $shotRel" -ForegroundColor Cyan
+    $shotArgs = @('--path', $ProjectRoot, '--script', 'res://tools/godot/screenshot.gd',
+                  '--', "--screenshot=$shotRel", '--frames=60')
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $Godot @shotArgs 2>&1 |
+      Where-Object { $_ -match '^\[screenshot\]' } | ForEach-Object { Write-Host "    $_" }
+    $ErrorActionPreference = $prevEAP
+    $shotAbs = Join-Path $ProjectRoot ($shotRel -replace '/', '\')
+    if (Test-Path $shotAbs) { Write-Host "截图已生成: $shotAbs" -ForegroundColor Green }
+    else { Write-Host "截图失败（不影响模型本身）" -ForegroundColor Yellow }
+  }
+}
+
+if ($Verify) { exit $verifyExit }
 exit 0
