@@ -1,13 +1,14 @@
 @echo off
 REM One-click auto-rig: give any static mesh a humanoid skeleton plus animations, then verify in Godot.
-REM Usage: tools\rig.cmd "<input.glb>" [-Name myasset] [-Preview] [-Screenshot] [-Height 1.8]
+REM Usage: tools\rig.cmd "<input.glb>" [-Name myasset] [-Prepare] [-TargetFaces 8000] [-Preview] [-Screenshot]
+REM   Add -Prepare when the input is AI-generated triangle soup (high poly, no UV, duplicate verts).
 REM Note: keep this file ASCII-only. cmd.exe reads .cmd as ANSI and would mangle CJK text.
 chcp 65001 >nul
 setlocal
 set "HERE=%~dp0"
 set "SRC=%~1"
 if "%SRC%"=="" (
-  echo Usage: tools\rig.cmd "input.glb" [-Name myasset] [-Preview] [-Screenshot]
+  echo Usage: tools\rig.cmd "input.glb" [-Name myasset] [-Prepare] [-TargetFaces 8000] [-Preview] [-Screenshot]
   exit /b 2
 )
 shift

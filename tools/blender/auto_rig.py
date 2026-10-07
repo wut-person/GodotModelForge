@@ -29,6 +29,7 @@ from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rig_lib
+import mesh_ops
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -60,6 +61,16 @@ def parse_args():
     p.add_argument("--side-penalty", type=float, default=2.5,
                    help="左右串扰惩罚系数，越大越不容易出现跨侧影响")
     p.add_argument("--report", default="", help="把分析结果写成 JSON 到该路径（可选）")
+    p.add_argument("--prepare", action="store_true",
+                   help="先把网格重拓扑/清理/减面/展 UV 再绑定（AI 生成的三角汤必须开）")
+    p.add_argument("--target-faces", type=int, default=8000,
+                   help="--prepare 时的目标三角面数，默认 8000")
+    p.add_argument("--remesh", default="voxel", choices=["voxel", "quad", "none"],
+                   help="重拓扑方式：voxel(快) / quad(慢但拓扑好) / none")
+    p.add_argument("--uv", default="smart", choices=["smart", "keep", "none"],
+                   help="UV 处理：smart(自动展开) / keep(保留原 UV) / none")
+    p.add_argument("--strip-rig", action="store_true",
+                   help="输入自带骨骼/动画时，先剥掉再重新绑定")
     return p.parse_args(argv)
 
 
@@ -488,9 +499,49 @@ def skin(mesh_obj, arm_obj, bones, side_penalty=2.5):
     return unweighted
 
 
+def strip_existing_rig(mesh_obj, objs):
+    """
+    剥掉输入自带的骨骼/蒙皮/动画。
+
+    从商店或网上拿到的模型常带一堆用不上的骨骼；直接重新绑定会出现
+    「两套骨架打架」，所以先清干净。顶点组也要一并删掉，否则旧权重会残留。
+    """
+    removed = {"armatures": 0, "modifiers": 0, "vertex_groups": 0, "actions": 0}
+    for mod in list(mesh_obj.modifiers):
+        if mod.type == "ARMATURE":
+            mesh_obj.modifiers.remove(mod)
+            removed["modifiers"] += 1
+    removed["vertex_groups"] = len(mesh_obj.vertex_groups)
+    for vg in list(mesh_obj.vertex_groups):
+        mesh_obj.vertex_groups.remove(vg)
+    mesh_obj.parent = None
+
+    for obj in list(objs):
+        if obj is mesh_obj:
+            continue
+        if obj.type == "ARMATURE":
+            bpy.data.objects.remove(obj, do_unlink=True)
+            removed["armatures"] += 1
+        elif obj.parent is not None and obj.type == "EMPTY":
+            # 骨骼层级带出来的空节点也清掉
+            try:
+                bpy.data.objects.remove(obj, do_unlink=True)
+            except Exception:
+                pass
+
+    for act in list(bpy.data.actions):
+        try:
+            bpy.data.actions.remove(act)
+            removed["actions"] += 1
+        except Exception:
+            pass
+    return removed
+
+
 # --------------------------------------------------------------------------- 主流程
 
-def auto_rig(src, out_path, target_height=0.0, clips=None, side_penalty=2.5, report_path=""):
+def auto_rig(src, out_path, target_height=0.0, clips=None, side_penalty=2.5, report_path="",
+             prepare=False, target_faces=8000, remesh="voxel", uv="smart", strip_rig=False):
     """
     给一个静态网格套骨架 + 动画并导出。返回分析/结果元数据 dict。
 
@@ -500,6 +551,25 @@ def auto_rig(src, out_path, target_height=0.0, clips=None, side_penalty=2.5, rep
     clean_scene(import_path=None if src.lower() == "scene" else src)
     objs = import_source(src)
     mesh_obj = gather_mesh(objs)
+
+    prep_report = None
+    if strip_rig:
+        removed = strip_existing_rig(mesh_obj, objs)
+        print("[autorig] 剥掉原有骨骼: 骨架=%d 修改器=%d 顶点组=%d 动作=%d"
+              % (removed["armatures"], removed["modifiers"],
+                 removed["vertex_groups"], removed["actions"]))
+
+    # AI 生成的网格是行进立方体出来的三角汤：没有边环、没有 UV、顶点重复，
+    # 必须先重拓扑才能绑定骨骼（否则形变会撕裂出尖刺）。
+    if prepare:
+        print("[autorig] 网格预处理: 目标面数=%d 重拓扑=%s UV=%s"
+              % (target_faces, remesh, uv))
+        prep_report = mesh_ops.prepare_generated_mesh(
+            mesh_obj, target_faces=target_faces, uv=uv, remesh=remesh)
+        print("[autorig] 预处理结果: 顶点 %d -> %d, 三角面 %d -> %d, UV=%s"
+              % (prep_report["input"]["vertices"], prep_report["output"]["vertices"],
+                 prep_report["input"]["triangles"], prep_report["output"]["triangles"],
+                 prep_report["output"]["has_uv"]))
 
     co = vertex_array(mesh_obj)
     info = analyze(co)
@@ -569,7 +639,20 @@ def auto_rig(src, out_path, target_height=0.0, clips=None, side_penalty=2.5, rep
         "clips": [a.name for a in actions],
         "unweighted_vertices": unweighted,
         "analysis": analysis,
+        "prepared": bool(prep_report),
     }
+    if prep_report:
+        meta["prepare"] = {
+            "target_faces": target_faces,
+            "remesh": remesh,
+            "uv": uv,
+            "input": prep_report["input"],
+            "output": prep_report["output"],
+            "steps": [{"step": s["step"],
+                       "faces_before": s["faces_before"],
+                       "faces_after": s["faces_after"]}
+                      for s in prep_report["steps"]],
+        }
     if report_path:
         os.makedirs(os.path.dirname(os.path.abspath(report_path)), exist_ok=True)
         with open(report_path, "w", encoding="utf-8") as fh:
@@ -584,7 +667,9 @@ def main():
     clips = [] if args.clips.strip().lower() == "none" else \
         [c.strip() for c in args.clips.split(",") if c.strip()]
     auto_rig(args.src, args.out, target_height=args.height, clips=clips,
-             side_penalty=args.side_penalty, report_path=args.report)
+             side_penalty=args.side_penalty, report_path=args.report,
+             prepare=args.prepare, target_faces=args.target_faces,
+             remesh=args.remesh, uv=args.uv, strip_rig=args.strip_rig)
 
 
 if __name__ == "__main__":

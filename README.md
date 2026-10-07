@@ -18,9 +18,14 @@
 | 建模后端 | ✅ 已完成 | **Blender 5.2.2**（以 `bpy` Python 模块方式运行，无需安装 Blender） |
 | 端到端链路 | ✅ 已跑通 | 程序化生成带骨骼动画的角色 → GLB → Godot 导入 → 自检全绿 |
 | 自动绑定（auto-rig） | ✅ 已完成 | **任意静态网格 → 分析体型 → 套 19 骨骼人形骨架 → 蒙皮 → 套 4 段动画 → Godot 验证通过** |
-| AI 图生3D 生成 | ⏳ 待接入 | 链路已就绪（静态网格进来即可自动绑定），等接生成模型 |
+| 重拓扑 + UV | ✅ 已完成 | **125 万面三角汤 → 8000 面流形网格 + UV → 绑定 → Godot 渲染通过** |
+| AI 图生3D 生成 | ✅ 已跑通 | **Hunyuan3D-2mini，峰值显存 4.45/6.44 GB，单次约 67 秒**；官方参考图 → 生成 → 重拓扑 → 绑定 → Godot 渲染全链路通过 |
 
 ### 跑通的样子
+
+**AI 图生3D 全链路**（官方参考图 → Hunyuan3D-2mini 生成 32 万面 → 重拓扑 9000 面 → 自动绑定 → Godot 渲染）：
+
+![AI 生成的模型在 Godot 里渲染](docs/preview/ai_demo.godot.png)
 
 Blender 侧模型（Workbench 渲染，带骨骼显示）：
 
@@ -82,13 +87,19 @@ GodotModelForge/
 │   ├── verify.ps1                三关校验实现
 │   ├── blender/
 │   │   ├── rig_lib.py            ★ 共享库：骨骼规范 / 蒙皮权重算法 / 动画库 / GLB 导出
+│   │   ├── mesh_ops.py           ★ 重拓扑：焊接 / 体素重网格 / 减面 / 展 UV
 │   │   ├── gen_character.py      程序化建模（自带网格，走共享库绑定）
 │   │   ├── auto_rig.py           ★ 自动绑定：分析体型 → 贴合骨架 → 蒙皮 → 加动画
+│   │   ├── make_reference.py     渲染图生3D 用的参考图（Workbench studio 光）
 │   │   └── render_preview.py     渲染预览图（Workbench，无需 GPU 光追）
 │   ├── pipeline/
 │   │   ├── build_character.ps1   程序化生成的入口
 │   │   ├── rig_asset.ps1         自动绑定的入口
-│   │   └── strip_rig.py          剥离 GLB 的骨骼/动画（造测试样本）
+│   │   ├── strip_rig.py          剥离 GLB 的骨骼/动画（造测试样本）
+│   │   ├── hunyuan3d_shape.py    ★ 本地图生3D（Hunyuan3D-2mini）
+│   │   ├── dino_key_map.py       ★ DINO 权重适配（见下方「踩过的坑」）
+│   │   ├── download_hunyuan3d.py 从 hf-mirror 下载权重
+│   │   └── diagnose_dino.py      DINO 编码器数值健康诊断
 │   ├── godot/
 │   │   └── screenshot.gd         Godot 真实渲染截图（SceneTree 脚本，支持 --asset 指定角色）
 │   └── _fixtures/                测试样本（已 gitignore，可重新生成）
@@ -112,10 +123,22 @@ tools\rig.cmd "D:\ai_out\monster.glb" -Preview -Screenshot
 → 计算蒙皮权重（带左右串扰惩罚）→ 套用 Idle/Walk/Run/Attack 四段动画
 → 导出 GLB → Godot 导入并自检 → 渲染预览图与场景截图。
 
-常用参数：
+**如果输入是 AI 生成的「三角汤」（高面数、无 UV、顶点重复），必须加重拓扑参数**：
+
+```cmd
+tools\rig.cmd "D:\ai_out\monster.glb" -Prepare -TargetFaces 8000 -Remesh voxel -Uv smart
+```
+
+实测效果：**125 万三角面 / 376 万顶点 / 无 UV → 8000 三角面 / 3962 顶点 / 带 UV**，
+34.9 秒完成，Godot 自检全绿。
 
 | 参数 | 作用 |
 |---|---|
+| `-Prepare` | 开重拓扑工序（焊接 → 清理 → 体素重网格 → 减面 → 法线 → 平滑 → 展 UV） |
+| `-TargetFaces 8000` | 目标三角面数（游戏角色建议 5k–20k） |
+| `-Remesh voxel\|quad\|none` | `voxel` 快且均匀；`quad` 拓扑更好但慢很多 |
+| `-Uv smart\|keep\|none` | `smart` 自动展 UV；生成模型本来没 UV 时用这个 |
+| `-StripRig` | 输入自带骨骼动画时先剥掉再重新绑定 |
 | `-Name myasset` | 指定落地资产名（默认取输入文件名） |
 | `-Height 2.4` | 缩放到目标身高（默认 0 = 保持原尺寸不缩放） |
 | `-Clips Idle,Walk` | 只套指定动画；`-Clips none` = 只要骨骼不要动画 |
@@ -130,6 +153,46 @@ python tools\pipeline\strip_rig.py --in hero.glb --out hero_static.glb --report 
 
 只保留网格与材质，去掉骨架/蒙皮/动画。上面的自动绑定链路就是用它造出
 「图生3D 风格」的输入来验证的（129 KB → 16.8 KB）。
+
+### 本地 AI 图生3D（一张图 → 3D 模型）
+
+```cmd
+python tools\pipeline\hunyuan3d_shape.py --image 参考图.png --out mesh.glb --steps 30 --octree 256
+```
+
+本机 6 GB 显存下**唯一可行**的本地免费生成模型是 **Hunyuan3D-2mini**。实测数据：
+
+| 项 | 实测值 |
+|---|---|
+| 峰值显存 | **4.45 GB / 6.44 GB** |
+| 单次耗时 | **约 67 秒**（30 步，octree 256） |
+| 输出 | 13 万–50 万三角面（原始，需重拓扑） |
+| 权重体积 | 4.3 GB（自包含：conditioner + model + vae 在同一文件） |
+
+**为什么不用更强的 TRELLIS.2**：实测其权重合计约 **7.9 GB**（int8 模型 4.89 GB +
+VAE 1.02/0.88 GB + CLIP-ViT 1.13 GB），6 GB 显存装不下。Hunyuan3D-2mini 的
+turbo 权重只有 3.56 GB + VAE 0.38 GB，是唯一装得下的。
+
+**推荐用法（配合重拓扑与绑定）**：
+
+```cmd
+REM 一步到位：图 → 3D → 重拓扑 → 骨骼动画 → Godot 验证
+python tools\pipeline\hunyuan3d_shape.py --image ref.png --out out.glb
+tools\rig.cmd out.glb -Name mychar -Prepare -TargetFaces 9000 -Uv smart -Screenshot
+```
+
+⚠️ **参考图质量决定成败**（实测结论）：
+
+| 输入图 | 生成结果 |
+|---|---|
+| 官方 demo.png（真实照片，有纹理有光照） | ✅ 正常三维体，跨度比 1.8 |
+| 自渲灰模（无贴图，单色） | ❌ 退化成 2m×2m×0.34m 的平板，跨度比 5.8 |
+| 带骨骼线框叠加的预览图 | ❌ 同样是平板 |
+
+**图生3D 需要的是「有纹理、有自然光照的真实照片」**。用无贴图灰模测图生3D 本身
+就是不合适的测试 —— 模型拿不到任何表面线索，只能吐出先验均值。
+渲染参考图时用 `tools\blender\make_reference.py`（Workbench studio 光 + cavity，
+保证有明暗），但即便如此，灰模仍不如真实带纹理的照片。
 
 ### 生成一个新角色并验证
 
@@ -219,7 +282,45 @@ D:\Tools\Godot\Godot_v4.7.2-stable_win64_console.exe --headless --path . -- --ch
 | PowerShell 5.1 无 `pwsh` | 本机只有 Windows PowerShell 5.1 | 脚本不要用 PS7 专有语法，用 `powershell.exe` 调用 |
 | `--headless` 截不到图 | headless 用 dummy 渲染驱动，viewport 没有画面 | 截图必须用真实渲染驱动（不加 `--headless`） |
 | Godot CLI 脚本基类 | `--script` 的脚本继承 `Node` 会报 `Can't load the script` | 必须继承 `SceneTree` 或 `MainLoop` |
-| Blender 官网 403 | `download.blender.org` 直连被拒，国内镜像要过 JS 校验 | 改用 `pip install bpy` 拿 Blender 作为 Python 模块 |
+| Blender 官网 403 | `download.blender.org` 直连被拒，国内镜像要过 JS 校验 | 改用 `pip install bpy`（需 Python 3.13，见下） |
+| `import bmesh` 失败 | 报 `ModuleNotFoundError: No module named 'bmesh'` | **`bpy` 必须最先导入**：在 bpy 模块模式下只有 `import bpy` 之后运行时才接进来 |
+| `huggingface.co` 超时 | 直连 HF 全部超时（github.com HTTP 也超时） | 设 `HF_ENDPOINT=https://hf-mirror.com`（官方特性）；`git clone` 反而可用 |
+| PyPI 装的是 CPU 版 torch | `torch.cuda.is_available()` 为 False | 必须用 `--index-url https://download.pytorch.org/whl/cu126` |
+| **Hunyuan3D-2mini 加载失败** | 报 `Missing/Unexpected key`，看起来像显存/环境问题 | **实为 DINO 权重命名与结构不兼容**，见下节 |
+| Blender 相对路径写错位置 | 渲染结果被写到 `C:\tools\...` | Blender 用**自己的工作目录**解析相对路径，必须传绝对路径 |
+| 图生3D 出平板 | 生成结果是 2m×2m×0.34m 的扁片 | 参考图必须是**有纹理、有自然光照的照片**；无贴图灰模无法生成 |
+
+### Hunyuan3D-2mini 的 DINO 权重不兼容（坑最深的一个）
+
+现象：`RuntimeError: Error(s) in loading state_dict for SingleImageEncoder`
+报大量 Missing/Unexpected key，**看起来像环境或显存问题，其实是命名与结构差异**。
+
+根因（`hy3dgen/shapegen/` 里的代码与 checkpoint 不匹配）：
+
+| checkpoint 实际结构 | 代码期望（`Dinov2Model`） |
+|---|---|
+| `DINOv2-with-registers` + SwiGLU FFN | 普通 `Dinov2Model` |
+| `attention.attention.{key,query,value}` | `attention.{k,q,v}_proj` |
+| `attention.output.dense` | `attention.o_proj` |
+| `mlp.weights_in`（**8192 宽，gate/up 融合**） | `mlp.gate_proj` + `mlp.up_proj`（各 4096） |
+| 无 register token | 会建出 `register_tokens` |
+| 多一层 `model.` 前缀 | 无该前缀 |
+
+而且 `pipelines.py:181` 的 `conditioner.load_state_dict(...)` **没传 `strict=False`**，
+所以直接抛异常。
+
+解法（`tools/pipeline/dino_key_map.py` + `hunyuan3d_shape.py` 里的补丁）：
+把 `torch.nn.Module.load_state_dict` 全局拦一层，识别 DINO 相关的键 →
+重建结构正确的编码器 → 改名 + 把融合的 `weights_in` 沿输出维对半拆成 gate/up
+→ 补一个全零 `register_tokens` → 显式加载 → 其余键放宽 `strict` 交给原逻辑。
+
+**验证依据**：适配后 **808/808 张量全部命中、零形状不匹配**，
+且加载后权重标准差 **0.0135**（训练好的 ViT 量级；随机初始化会在 1.0 量级）。
+`tools/pipeline/diagnose_dino.py` 可复现这个诊断。
+
+> 排查这类问题的通用教训：`Missing/Unexpected key` 是**结构不匹配**的信号，
+> 不要往显存/驱动方向查。先用 `safetensors` 把权重键名和形状打出来，
+> 和模型 `state_dict()` 逐项比对 —— 形状相等是映射正确的硬证据。
 
 ---
 
@@ -239,5 +340,17 @@ D:\Tools\Python313-blender\python.exe get-pip.py
 
 # 3) Blender 作为 Python 模块（约 340 MB）
 D:\Tools\Python313-blender\python.exe -m pip install bpy
+
+# 4) PyTorch CUDA 版（注意必须指定 CUDA 索引，默认 PyPI 是 CPU 版）
+D:\Tools\Python313-blender\python.exe -m pip install --index-url https://download.pytorch.org/whl/cu126 torch torchvision
+
+# 5) 图生3D 依赖 + 官方代码
+D:\Tools\Python313-blender\python.exe -m pip install diffusers transformers einops omegaconf scikit-image opencv-python-headless accelerate safetensors pygltflib
+git clone --depth 1 https://github.com/Tencent-Hunyuan/Hunyuan3D-2.git D:\Tools\Hunyuan3D-2
+
+# 6) 模型权重（走 hf-mirror，官方源在本机超时）
+$env:HF_ENDPOINT = "https://hf-mirror.com"
+[Environment]::SetEnvironmentVariable("HF_ENDPOINT", "https://hf-mirror.com", "User")
+D:\Tools\Python313-blender\python.exe tools\pipeline\download_hunyuan3d.py
 ```
 

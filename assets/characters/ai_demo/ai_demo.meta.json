@@ -1,0 +1,143 @@
+{
+  "generator": "autorig",
+  "source": "D:\\deepseek Flash\\GodotModelForge\\tools\\_fixtures\\gen\\demo_gen.glb",
+  "glb": "ai_demo.glb",
+  "glb_bytes": 570808,
+  "height_m": 1.9916,
+  "vertices": 4502,
+  "triangles": 9000,
+  "bones": [
+    "hips",
+    "spine",
+    "chest",
+    "neck",
+    "head",
+    "shoulder.L",
+    "upperarm.L",
+    "forearm.L",
+    "hand.L",
+    "shoulder.R",
+    "upperarm.R",
+    "forearm.R",
+    "hand.R",
+    "thigh.L",
+    "shin.L",
+    "foot.L",
+    "thigh.R",
+    "shin.R",
+    "foot.R"
+  ],
+  "bone_count": 19,
+  "clips": [
+    "Idle",
+    "Walk",
+    "Run",
+    "Attack"
+  ],
+  "unweighted_vertices": 0,
+  "analysis": {
+    "height": 1.9916,
+    "z_min": -0.9992,
+    "z_max": 0.9925,
+    "center_x": -0.0072,
+    "center_y": 0.0651,
+    "torso_center_x": -0.005,
+    "x_extent": 1.3109,
+    "y_extent": 1.1125,
+    "hip_width": 1.2986,
+    "torso_half": 0.5558,
+    "torso_depth": 0.8847,
+    "has_arms": true,
+    "arm_span": 0.6554,
+    "arm_bottom": -0.2772,
+    "arm_top": 0.9676,
+    "arm_bins": 16,
+    "hand_x": 0.5243,
+    "hand_y": 0.075,
+    "hand_z": -0.2772,
+    "legs_split": true,
+    "widest_z_rel": 0.3875,
+    "vertex_count": 4502,
+    "arm_layers_z_rel": [
+      0.362,
+      0.388,
+      0.412,
+      0.438,
+      0.712,
+      0.738,
+      0.762,
+      0.788,
+      0.812,
+      0.837,
+      0.863,
+      0.887,
+      0.913,
+      0.938,
+      0.962,
+      0.988
+    ]
+  },
+  "prepared": true,
+  "prepare": {
+    "target_faces": 9000,
+    "remesh": "voxel",
+    "uv": "smart",
+    "input": {
+      "vertices": 160826,
+      "polygons": 321652,
+      "triangles": 321652,
+      "quads": 0,
+      "ngons": 0,
+      "materials": 0,
+      "uv_layers": 0,
+      "has_uv": false
+    },
+    "output": {
+      "vertices": 4502,
+      "polygons": 6873,
+      "triangles": 9000,
+      "quads": 2127,
+      "ngons": 0,
+      "materials": 0,
+      "uv_layers": 1,
+      "has_uv": true
+    },
+    "steps": [
+      {
+        "step": "weld",
+        "faces_before": 321652,
+        "faces_after": 318872
+      },
+      {
+        "step": "cleanup",
+        "faces_before": 318872,
+        "faces_after": 318872
+      },
+      {
+        "step": "voxel_remesh",
+        "faces_before": 318872,
+        "faces_after": 26468
+      },
+      {
+        "step": "decimate",
+        "faces_before": 26468,
+        "faces_after": 9000
+      },
+      {
+        "step": "normals",
+        "faces_before": 9000,
+        "faces_after": 9000
+      },
+      {
+        "step": "shade",
+        "faces_before": 9000,
+        "faces_after": 9000
+      },
+      {
+        "step": "smart_uv",
+        "faces_before": 9000,
+        "faces_after": 9000
+      }
+    ]
+  }
+}

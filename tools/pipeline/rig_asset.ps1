@@ -25,6 +25,23 @@
 .PARAMETER SidePenalty
   左右串扰惩罚系数，默认 2.5。出现「左臂动、右臂跟着动」时可调大
 
+.PARAMETER Prepare
+  先做重拓扑工序再绑定。**AI 生成的网格必须开这个**：
+  图生3D 的产物是高面数三角汤（无 UV、顶点重复、拓扑不连贯），
+  不重拓扑直接绑定会导致形变撕裂，面数也远超游戏预算。
+
+.PARAMETER TargetFaces
+  -Prepare 时的目标三角面数，默认 8000（游戏角色建议 5k–20k）
+
+.PARAMETER Remesh
+  重拓扑方式：voxel（快，均匀流形）/ quad（慢，四边形拓扑更好）/ none
+
+.PARAMETER Uv
+  UV 处理：smart（自动展开，生成模型用这个）/ keep（保留原 UV）/ none
+
+.PARAMETER StripRig
+  输入自带骨骼/动画时，先剥掉再重新绑定，避免两套骨架打架
+
 .PARAMETER Preview
   生成后渲染一张 Blender 预览图
 
@@ -36,6 +53,10 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\pipeline\rig_asset.ps1 -In D:\ai_out\monster.glb -Preview -Screenshot
+
+.EXAMPLE
+  # AI 生成的三角汤：必须开 -Prepare
+  powershell -ExecutionPolicy Bypass -File tools\pipeline\rig_asset.ps1 -In D:\ai_out\monster.glb -Prepare -TargetFaces 8000 -Preview
 #>
 [CmdletBinding()]
 param(
@@ -44,6 +65,11 @@ param(
   [double]$Height = 0,
   [string]$Clips = 'Idle,Walk,Run,Attack',
   [double]$SidePenalty = 2.5,
+  [switch]$Prepare,
+  [int]$TargetFaces = 8000,
+  [ValidateSet('voxel', 'quad', 'none')][string]$Remesh = 'voxel',
+  [ValidateSet('smart', 'keep', 'none')][string]$Uv = 'smart',
+  [switch]$StripRig,
   [switch]$Preview,
   [switch]$Screenshot,
   [switch]$NoVerify
@@ -82,6 +108,18 @@ Write-Host "输出  : $target" -ForegroundColor Cyan
 $rigArgs = @($AutoRig, '--in', $srcPath, '--out', $target,
              '--height', "$Height", '--clips', $Clips,
              '--side-penalty', "$SidePenalty", '--report', $report)
+if ($Prepare) {
+  $rigArgs += @('--prepare', '--target-faces', "$TargetFaces", '--remesh', $Remesh, '--uv', $Uv)
+  Write-Host "重拓扑: 目标 $TargetFaces 面 / $Remesh / UV=$Uv" -ForegroundColor Cyan
+  # 重拓扑会重建网格，自带骨骼的输入会因此丢骨架 —— 提醒但不擅自改用户意图
+  if (-not $StripRig) {
+    Write-Host "提示: 若输入自带骨骼动画，重拓扑会破坏蒙皮，建议同时加 -StripRig" -ForegroundColor DarkGray
+  }
+}
+if ($StripRig) {
+  $rigArgs += '--strip-rig'
+  Write-Host "会先剥掉输入自带的骨骼与动画" -ForegroundColor Cyan
+}
 $env:PYTHONIOENCODING = 'utf-8'
 $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
