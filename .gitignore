@@ -1,0 +1,10 @@
+# Godot 导入缓存与编辑器状态，不要提交（可重建）
+.godot/
+# 导出产物
+build/
+exports/
+
+# 系统垃圾
+Thumbs.db
+desktop.ini
+*.tmp

@@ -1,0 +1,42 @@
+{
+  "name": "hero",
+  "generator": "blender-procedural-humanoid",
+  "blender": "5.2.2 LTS",
+  "height_m": 1.8,
+  "seed": 0,
+  "vertices": 136,
+  "triangles": 204,
+  "materials": [
+    "M_Body",
+    "M_Limb",
+    "M_Accent"
+  ],
+  "bones": [
+    "hips",
+    "spine",
+    "chest",
+    "neck",
+    "head",
+    "shoulder.L",
+    "upperarm.L",
+    "forearm.L",
+    "hand.L",
+    "shoulder.R",
+    "upperarm.R",
+    "forearm.R",
+    "hand.R",
+    "thigh.L",
+    "shin.L",
+    "foot.L",
+    "thigh.R",
+    "shin.R",
+    "foot.R"
+  ],
+  "clips": [
+    "Idle",
+    "Walk",
+    "Attack"
+  ],
+  "glb": "hero.glb",
+  "glb_bytes": 132124
+}
