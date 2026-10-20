@@ -1,0 +1,13 @@
+{
+  "asset": "ai_demo",
+  "description": "身高1.99米的绑定角色，含待机行走奔跑攻击动画，适用于游戏战斗场景",
+  "tags": [
+    "character",
+    "rigged",
+    "lowpoly"
+  ],
+  "suggested_name": "rigged_character_19bones",
+  "source": "llm",
+  "model": "deepseek-chat",
+  "elapsed_ms": 955
+}

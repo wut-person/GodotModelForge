@@ -110,6 +110,55 @@ GodotModelForge/
 
 ## 怎么用
 
+### 一条命令跑完整条链路（录屏 / 演示用）
+
+```cmd
+tools\demo.cmd
+```
+
+参考图 → AI 图生3D（约 67 秒）→ 重拓扑 → 自动绑定 → Godot 真实渲染截图。
+全程带时间戳输出，结尾给耗时汇总和资产指标（面数 / 骨骼 / 动画 / 未绑定顶点）。
+
+| 产物 | 路径 |
+|---|---|
+| 中间网格（三角汤） | `assets\references\demo_ai_raw.glb` |
+| 落地资产 | `assets\characters\demo_ai\demo_ai.glb` + `.meta.json` |
+| Godot 渲染图 | `docs\preview\demo_ai.godot.png` |
+
+常用参数：
+
+| 参数 | 作用 |
+|---|---|
+| `-Image <png>` | 换参考图，默认 `assets\references\demo_official.png` |
+| `-Steps 12` | 少步数，快速看效果 |
+| `-TargetFaces 6000` | 重拓扑目标面数 |
+| `-NoScreenshot` | 跳过截图（无窗口/无显卡环境） |
+| `-Cleanup` | 跑完删掉中间网格 |
+| `-Pause` | 结束时等回车，双击运行窗口不闪退 |
+
+> ⚠️ 参考图必须是**有纹理、有自然光照的真实照片**。用自渲灰模会退化成一张扁片
+> （原因见下方「已知坑」里的「图生3D 出平板」）。
+
+### LLM 辅助：给资产生成描述与标签
+
+```cmd
+python tools\pipeline\asset_caption.py --meta assets\characters\demo_ai\demo_ai.meta.json
+```
+
+读 `meta.json`（面数 / 骨骼 / 动画 / 身高），调 DeepSeek API 生成一句中文描述 + 3–5 个标签，
+写到 `<资产名>.caption.json`。三个设计点：
+
+| 点 | 做法 |
+|---|---|
+| 结构化输出 | `response_format={"type":"json_object"}`，程序直接消费，不用人再看 |
+| 容错 | 模型把数组写成 `a / b / c` 这种字符串时自动拆分；字段缺失即判失败 |
+| 降级 | 没 key / 超时 / 格式错 全部回落到规则生成，管线不会因为模型挂掉而中断 |
+
+`--offline` 完全不联网（只用规则），适合演示与回归测试。实测单次约 1 秒，
+输出里的 `source` 字段会标明结果来自 `llm` 还是 `rule`。
+
+Key 读取顺序：`--api-key` → 环境变量 `DEEPSEEK_API_KEY` → `~/.dsh/.credentials.yaml`。
+
 ### 给任意模型自动套骨架并加动画（核心能力）
 
 图生3D / 文生3D / 网上下载的模型，通常只有**一个静态网格**：没骨骼、没蒙皮、没动画。
