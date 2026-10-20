@@ -82,22 +82,26 @@ def main():
         m = base.to(dtype=dtype).eval()
         inp = x.to(dtype=dtype)
         with torch.no_grad():
-            out = m(inp)               # Dinov2WithRegistersModel 返回带 last_hidden_state
+            out = m(inp, output_hidden_states=True)   # Dinov2WithRegistersModel 返回带 last_hidden_state
             feat = out.last_hidden_state if hasattr(out, "last_hidden_state") else out
         print("\n--- %s ---" % tag)
         print("  输入:")
         stats("  输入", inp)
         print("  输出:")
         stats("  last_hidden_state", feat)
-        # 每层范数，定位是从哪一层开始爆的
-        with torch.no_grad():
-            h = inp
-            norms = []
-            for i, layer in enumerate(m.encoder.layer):
-                h = layer(h)[0] if isinstance(layer(h), tuple) else layer(h)
-                norms.append((i, float(h.float().abs().max()), int((~torch.isfinite(h)).sum())))
+        # 每层范数，定位是从哪一层开始爆的。
+        # 用模型自己吐的 hidden_states；不要手工把原图喂给每一层——shape 不匹配，
+        # 之前就是这里抛 "expected input with shape [*, 1536], but got [1, 3, 518, 518]"。
+        hs = getattr(out, "hidden_states", None) or ()
+        norms = []
+        for i, h in enumerate(hs):
+            h = h.detach()
+            norms.append((i, float(h.float().abs().max()), int((~torch.isfinite(h)).sum())))
         bad = [n for n in norms if n[2] > 0]
-        print("  逐层最大绝对值: 首=%.2f 末=%.2f" % (norms[0][1], norms[-1][1]))
+        if norms:
+            print("  逐层最大绝对值: 首=%.2f 末=%.2f" % (norms[0][1], norms[-1][1]))
+        else:
+            print("  未取到 hidden_states，跳过逐层检查")
         if bad:
             print("  ❌ 从第 %d 层开始出现非有限值（共 %d 层受影响）" % (bad[0][0], len(bad)))
         else:
